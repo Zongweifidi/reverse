@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Reserve 成</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    /* 字体导入 */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@700;900&display=swap');
+
+    :root {
+      /* 色彩系统 */
+      --bg-primary: #0F0F10;
+      --bg-secondary: #18181B;
+      --border-secondary: #2A2A2E;
+      --accent-gold-primary: #C6A96B;
+      --accent-gold-secondary: #A38A5D;
+      --accent-gold-dark: #7A673F;
+      --text-primary: #EDEDED;
+      --text-secondary: #A1A1AA;
+      /* 尺寸与间距 */
+      --border-radius-sm: 8px;
+      --border-radius-md: 12px;
+      --spacing-xs: 0.5rem;
+      --spacing-sm: 1rem;
+      --spacing-md: 1.5rem;
+      --spacing-lg: 2rem;
+      /* 阴影与材质 */
+      --shadow-subtle: 0 2px 8px rgba(198, 169, 107, 0.12);
+      --shadow-card: 0 4px 16px rgba(42, 42, 46, 0.15);
+      /* 响应式断点 */
+      --breakpoint-mobile: 320px;
+      --breakpoint-tablet: 768px;
+      --breakpoint-desktop: 1200px;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+      color: var(--text-primary);
+    }
+    /* 可选纹理叠加 */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="texture" patternUnits="userSpaceOnUse" width="20" height="20"><circle cx="10" cy="10" r="1" fill="rgba(198,169,107,0.05)"/></pattern></defs><rect width="100" height="100" fill="url(%23texture)"/></svg>');
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    .container {
+      background: var(--bg-secondary);
+      margin-top: 48px;
+      padding: 2.5rem 2rem 2rem 2rem;
+      border-radius: var(--border-radius-md);
+      box-shadow: var(--shadow-card);
+      max-width: 420px;
+      width: 100%;
+      position: relative;
+      transition: box-shadow 0.3s ease, transform 0.2s ease;
+      animation: floatCard 1.2s cubic-bezier(.4,1.6,.6,1) 1;
+      border: 1px solid var(--border-secondary);
+    }
+    @keyframes floatCard {
+      0% { opacity: 0; transform: translateY(40px) scale(0.98); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 2.3rem;
+      margin-bottom: 1.5rem;
+      user-select: none;
+      cursor: pointer;
+      font-family: 'Playfair Display', serif;
+      font-weight: 900;
+      letter-spacing: 2px;
+      color: var(--text-primary);
+      transition: color 0.2s;
+    }
+
+    form label {
+      display: block;
+      margin: 1rem 0 0.3rem 0;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    input, textarea, button, select {
+      width: 100%;
+      padding: 0.7rem;
+      border-radius: var(--border-radius-sm);
+      border: 1px solid var(--border-secondary);
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+      box-sizing: border-box;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      font-family: 'Inter', sans-serif;
+    }
+    textarea {
+      resize: vertical;
+      min-height: 60px;
+      max-height: 200px;
+    }
+
+    button {
+      background: transparent;
+      border: 2px solid var(--accent-gold-primary);
+      color: var(--accent-gold-primary);
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 1rem;
+      transition: all 0.3s ease;
+      outline: none;
+      border-radius: var(--border-radius-md);
+    }
+    button:active {
+      transform: scale(0.97);
+    }
+    button:hover {
+      background: var(--accent-gold-primary);
+      color: var(--bg-primary);
+      box-shadow: var(--shadow-subtle);
+    }
+
+    .footer {
+      margin-top: 40px;
+      color: var(--text-secondary);
+      font-size: 1.05rem;
+      text-align: center;
+      cursor: pointer;
+      user-select: none;
+      letter-spacing: 1px;
+    }
+
+    .admin-list {
+      margin: 1.5rem 0 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .admin-item {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-secondary);
+      border-radius: var(--border-radius-md);
+      margin-bottom: 1rem;
+      padding: 1.2rem 1rem 1rem 1rem;
+      box-shadow: var(--shadow-card);
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      transition: border-color 0.3s ease;
+    }
+    .admin-item:hover {
+      border-color: var(--accent-gold-primary);
+    }
+
+    .admin-actions {
+      display: flex;
+      gap: 1rem;
+      margin-top: 0.5rem;
+    }
+    .admin-actions button {
+      flex: 1;
+      padding: 0.5rem 0;
+      font-size: 1rem;
+      border-radius: var(--border-radius-sm);
+      margin: 0;
+      background: transparent;
+      border: 2px solid var(--accent-gold-primary);
+      color: var(--accent-gold-primary);
+      transition: all 0.3s ease;
+    }
+    .accept-btn {
+      border-color: #43e97b;
+      color: #43e97b;
+    }
+    .accept-btn:hover {
+      background: #43e97b;
+      color: #fff;
+    }
+    .reject-btn {
+      border-color: #e53935;
+      color: #e53935;
+    }
+    .reject-btn:hover {
+      background: #e53935;
+      color: #fff;
+    }
+
+    .back-btn {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-secondary);
+      color: var(--text-secondary);
+      margin-top: 1.5rem;
+      border-radius: var(--border-radius-sm);
+      font-weight: bold;
+      transition: border-color 0.3s ease;
+    }
+    .back-btn:hover {
+      border-color: var(--accent-gold-secondary);
+      color: var(--text-primary);
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 768px) {
+      .container {
+        margin-top: 10vw;
+        padding: 1.2rem 0.5rem 1rem 0.5rem;
+        max-width: 98vw;
+      }
+      h1 {
+        font-size: 1.3rem;
+      }
+    }
+    @media (max-width: 320px) {
+      .container {
+        padding: var(--spacing-sm);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div style="text-align:center;margin-top:32px;">
+    <svg width="80" height="80" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;">
+      <path d="M12 2L15 8L22 9L17 14L18 21L12 18L6 21L7 14L2 9L9 8L12 2Z" fill="var(--accent-gold-primary)"/>
+    </svg>
+  </div>
+  <div class="container" id="booking-page">
+    <h1 id="main-title">欢迎预约 <span style="font-size:2.2rem;vertical-align:middle;">成</span> 大老板</h1>
+    <form id="booking-form" autocomplete="off">
+      <label for="date">预约日期</label>
+      <input type="date" id="date" required>
+      <label for="time">预约时间</label>
+      <input type="time" id="time" required>
+      <label for="reason">预约理由</label>
+      <textarea id="reason" maxlength="100" placeholder="请填写你为何要见 成" required></textarea>
+      <button type="submit" id="submit-btn">立即预约</button>
+    </form>
+  </div>
+
+  <div class="container hidden" id="admin-page">
+    <h1>预约请求后台</h1>
+    <ul class="admin-list" id="admin-list"></ul>
+    <button class="back-btn" id="back-btn">退出后台</button>
+  </div>
+
+  <!-- 隐藏的密码输入框 -->
+  <div class="container hidden" id="admin-login">
+    <h1 style="font-size:1.3rem;">请输入神秘通行密码</h1>
+    <input type="password" id="admin-password" placeholder="密码">
+    <button id="login-btn">进入后台</button>
+    <button class="back-btn" id="cancel-login-btn">取消</button>
+    <div id="login-error" style="color:#e53935;margin-top:0.5rem;display:none;">密码错误！</div>
+  </div>
+
+  <div class="footer" id="footer">
+    © 2026 成 家族保留所有恶搞权利
+  </div>
+
+  <script>
+    // --- 配置 ---
+    const ADMIN_PASSWORDS = ['878888'];
+
+    // --- DOM 元素 ---
+    const bookingPage = document.getElementById('booking-page');
+    const adminPage = document.getElementById('admin-page');
+    const adminLogin = document.getElementById('admin-login');
+    const adminList = document.getElementById('admin-list');
+    const backBtn = document.getElementById('back-btn');
+    const mainTitle = document.getElementById('main-title');
+    const footer = document.getElementById('footer');
+    const loginBtn = document.getElementById('login-btn');
+    const cancelLoginBtn = document.getElementById('cancel-login-btn');
+    const adminPassword = document.getElementById('admin-password');
+    const loginError = document.getElementById('login-error');
+    const bookingForm = document.getElementById('booking-form');
+    const reasonInput = document.getElementById('reason');
+
+    // --- 状态 ---
+    let titleClickCount = 0;
+    let titleClickTimer = null;
+
+    // --- 工具函数 ---
+    function getBookings() {
+      return JSON.parse(localStorage.getItem('成_bookings') || '[]');
+    }
+    function setBookings(bookings) {
+      localStorage.setItem('成_bookings', JSON.stringify(bookings));
+    }
+    function showToast(msg) {
+      const toast = document.createElement('div');
+      toast.textContent = msg;
+      toast.style.position = 'fixed';
+      toast.style.left = '50%';
+      toast.style.top = '20%';
+      toast.style.transform = 'translate(-50%, -50%)';
+      toast.style.background = 'var(--bg-secondary)';
+      toast.style.color = 'var(--text-primary)';
+      toast.style.padding = '1rem 2rem';
+      toast.style.borderRadius = 'var(--border-radius-md)';
+      toast.style.fontSize = '1.1rem';
+      toast.style.zIndex = 9999;
+      toast.style.boxShadow = 'var(--shadow-subtle)';
+      document.body.appendChild(toast);
+      setTimeout(() => {
+        toast.remove();
+      }, 1800);
+    }
+    function switchPage(page) {
+      bookingPage.classList.add('hidden');
+      adminPage.classList.add('hidden');
+      adminLogin.classList.add('hidden');
+      if (page === 'booking') bookingPage.classList.remove('hidden');
+      if (page === 'admin') adminPage.classList.remove('hidden');
+      if (page === 'login') adminLogin.classList.remove('hidden');
+    }
+
+    // --- 预约表单提交 ---
+    bookingForm.addEventListener('submit', function(e) {
+      e.preventDefault();
+      const date = document.getElementById('date').value;
+      const time = document.getElementById('time').value;
+      const reason = reasonInput.value.trim();
+      if (!date || !time || !reason) {
+        showToast('请填写完整信息！');
+        return;
+      }
+      const bookings = getBookings();
+      bookings.push({ date, time, reason });
+      setBookings(bookings);
+      bookingForm.reset();
+      showToast('已发送给 成，请耐心等待他的恩赐 👑');
+    });
+
+    // --- 隐藏入口机制 ---
+    // 1. 连续点击标题3次
+    mainTitle.addEventListener('click', function() {
+      titleClickCount++;
+      if (titleClickTimer) clearTimeout(titleClickTimer);
+      titleClickTimer = setTimeout(() => { titleClickCount = 0; }, 1200);
+      if (titleClickCount === 3) {
+        titleClickCount = 0;
+        adminPassword.value = '';
+        loginError.style.display = 'none';
+        switchPage('login');
+      }
+    });
+    // 2. 点击底部版权 5 次
+    let footerClickCount = 0;
+    let footerClickTimer = null;
+    footer.addEventListener('click', function() {
+      footerClickCount++;
+      if (footerClickTimer) clearTimeout(footerClickTimer);
+      footerClickTimer = setTimeout(() => { footerClickCount = 0; }, 1500);
+      if (footerClickCount === 5) {
+        footerClickCount = 0;
+        adminPassword.value = '';
+        loginError.style.display = 'none';
+        switchPage('login');
+      }
+    });
+
+    // --- 管理员登录 ---
+    loginBtn.addEventListener('click', function() {
+      const pwd = adminPassword.value.trim();
+      if (ADMIN_PASSWORDS.includes(pwd)) {
+        adminPassword.value = '';
+        loginError.style.display = 'none';
+        renderAdminList();
+        switchPage('admin');
+      } else {
+        loginError.style.display = 'block';
+      }
+    });
+    adminPassword.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') loginBtn.click();
+    });
+    cancelLoginBtn.addEventListener('click', function() {
+      switchPage('booking');
+    });
+
+    // --- 管理员界面渲染 ---
+    function renderAdminList() {
+      const bookings = getBookings();
+      adminList.innerHTML = '';
+      if (bookings.length === 0) {
+        adminList.innerHTML = '<li style="color:var(--text-secondary);text-align:center;">暂无预约请求，成 可以安心摸鱼。</li>';
+        return;
+      }
+      bookings.forEach((b, idx) => {
+        const li = document.createElement('li');
+        li.className = 'admin-item';
+        li.innerHTML = `
+          <div><b>日期：</b>${b.date}</div>
+          <div><b>时间：</b>${b.time}</div>
+          <div><b>理由：</b>${b.reason.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+          <div class="admin-actions">
+            <button class="accept-btn">同意</button>
+            <button class="reject-btn">拒绝</button>
+          </div>
+        `;
+        // 按钮事件
+        li.querySelector('.accept-btn').onclick = () => {
+          showToast('成 已同意该预约，快去膜拜他吧！');
+          removeBooking(idx);
+        };
+        li.querySelector('.reject-btn').onclick = () => {
+          showToast('成 拒绝了你的请求，建议反思人生。');
+          removeBooking(idx);
+        };
+        adminList.appendChild(li);
+      });
+    }
+    function removeBooking(idx) {
+      const bookings = getBookings();
+      bookings.splice(idx, 1);
+      setBookings(bookings);
+      renderAdminList();
+    }
+
+    // --- 退出后台 ---
+    backBtn.addEventListener('click', function() {
+      switchPage('booking');
+    });
+
+    // --- 初始化 ---
+    switchPage('booking');
+  </script>
+</body>
+</html>

@@ -9,6 +9,7 @@ RUN npm install --omit=dev
 COPY arena-seng.html ./
 COPY arena-seng-app.js ./
 COPY server.js ./
+COPY schedule-config.json ./
 COPY ONLINE-SETUP.md ./
 COPY LICENSE ./
 

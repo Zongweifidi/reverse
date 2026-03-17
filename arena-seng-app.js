@@ -2,11 +2,18 @@
   'use strict';
 
   const LOCAL_STORAGE_KEY = 'cheng_bookings';
+  const LOCAL_SETTINGS_KEY = 'cheng_booking_settings';
   const CLIENT_ID_KEY = 'cheng_booking_client_id';
   const LOCAL_ADMIN_PASSWORDS = ['878888'];
   const APP_CONFIG = {
     apiBaseUrl: '',
     pollIntervalMs: 15000
+  };
+  const FALLBACK_TIME_CONFIG = {
+    timeGroups: [
+      { label: '上午', times: ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30'] },
+      { label: '下午', times: ['14:00', '14:30', '15:00', '15:30', '16:00', '16:30'] }
+    ]
   };
 
   const $ = s => document.querySelector(s);
@@ -28,6 +35,7 @@
   const logoLink          = $('.nav__logo');
   const timePicker        = $('.time-picker');
   const formPanel         = $('.panel');
+  const timeSlotsRoot     = $('#time-slots-root');
   const calPrev           = $('#cal-prev');
   const calNext           = $('#cal-next');
   const selectedDateLabel   = $('#selected-date-label');
@@ -47,9 +55,12 @@
   const syncModePill        = $('#sync-mode-pill');
   const adminLoginHint      = $('#admin-login-hint');
   const adminPanelDesc      = $('#admin-panel-desc');
+  const adminTimeSettings   = $('#admin-time-settings');
+  const adminTimeStatus     = $('#admin-time-settings-status');
+  const adminTimeSaveBtn    = $('#admin-time-save-btn');
+  const adminTimeResetBtn   = $('#admin-time-reset-btn');
   const jumpLinks     = Array.from($$('.nav__link[href^="#"], .hero__actions .btn[href^="#"]'));
   const navLinks      = Array.from($$('.nav__link[href^="#"]'));
-  const timeSlots     = Array.from($$('.time-slot'));
   const flowItems     = Array.from($$('[data-flow-step]'));
 
   const loginErrorDefaultText = loginError ? loginError.textContent.trim() : '密码错误。你不是成。';
@@ -66,6 +77,10 @@
     publicSyncPromise: null,
     adminSyncPromise: null,
     submitPending: false,
+    settingsSavePending: false,
+    timeConfig: normalizeTimeConfig(FALLBACK_TIME_CONFIG),
+    disabledTimes: [],
+    adminDisabledDraft: [],
     publicBookings: [],
     myBookings: Boolean(API_BASE_URL) ? [] : getLocalBookings(),
     adminBookings: [],
@@ -75,13 +90,12 @@
     pollTimer: null
   };
 
-  timeSlots.forEach(function(slot) {
-    slot.type = 'button';
-    slot.dataset.time = slot.dataset.time || slot.textContent.trim();
-    if (slot.classList.contains('time-slot--disabled')) {
-      slot.dataset.baseDisabled = 'true';
-    }
-  });
+  if (!runtime.remoteEnabled) {
+    runtime.disabledTimes = getLocalSettings().disabledTimes;
+    runtime.adminDisabledDraft = runtime.disabledTimes.slice();
+  }
+
+  renderBookingTimeSlots();
 
   var selectedDate = findNextAvailableDate(90, getOccupancyBookings());
   var selectedDateObj = parseDate(selectedDate);
@@ -124,6 +138,61 @@
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   }
 
+  function cloneTimeConfig(config) {
+    return {
+      timeGroups: (config.timeGroups || []).map(function(group) {
+        return {
+          label: String(group.label || '').trim() || '时段',
+          times: (group.times || []).map(function(time) {
+            return String(time || '').trim();
+          })
+        };
+      })
+    };
+  }
+
+  function normalizeTimeConfig(raw) {
+    var groups = Array.isArray(raw && raw.timeGroups) ? raw.timeGroups : FALLBACK_TIME_CONFIG.timeGroups;
+    var normalizedGroups = groups.map(function(group) {
+      return {
+        label: String(group && group.label ? group.label : '').trim() || '时段',
+        times: Array.isArray(group && group.times)
+          ? group.times
+              .map(function(time) { return String(time || '').trim(); })
+              .filter(function(time, index, list) {
+                return /^\d{2}:\d{2}$/.test(time) && list.indexOf(time) === index;
+              })
+          : []
+      };
+    }).filter(function(group) {
+      return group.times.length > 0;
+    });
+
+    return cloneTimeConfig({
+      timeGroups: normalizedGroups.length > 0 ? normalizedGroups : FALLBACK_TIME_CONFIG.timeGroups
+    });
+  }
+
+  function getAllConfiguredTimes() {
+    return runtime.timeConfig.timeGroups.reduce(function(result, group) {
+      group.times.forEach(function(time) {
+        if (result.indexOf(time) === -1) result.push(time);
+      });
+      return result;
+    }, []);
+  }
+
+  function normalizeDisabledTimes(values) {
+    var allowedTimes = getAllConfiguredTimes();
+    if (!Array.isArray(values)) return [];
+
+    return values
+      .map(function(time) { return String(time || '').trim(); })
+      .filter(function(time, index, list) {
+        return allowedTimes.indexOf(time) !== -1 && list.indexOf(time) === index;
+      });
+  }
+
   function normalizeBooking(raw) {
     if (!raw || typeof raw !== 'object') return null;
 
@@ -157,6 +226,23 @@
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data.map(normalizeBooking).filter(Boolean)));
   }
 
+  function getLocalSettings() {
+    try {
+      var parsed = JSON.parse(localStorage.getItem(LOCAL_SETTINGS_KEY) || '{}');
+      return {
+        disabledTimes: normalizeDisabledTimes(parsed.disabledTimes)
+      };
+    } catch (error) {
+      return { disabledTimes: [] };
+    }
+  }
+
+  function setLocalSettings(settings) {
+    localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify({
+      disabledTimes: normalizeDisabledTimes(settings.disabledTimes)
+    }));
+  }
+
   function getOrCreateClientId() {
     try {
       var existing = String(localStorage.getItem(CLIENT_ID_KEY) || '').trim();
@@ -181,82 +267,12 @@
     return runtime.remoteEnabled ? runtime.adminBookings : getLocalBookings();
   }
 
-  function isSlotTaken(bookings, dateStr, timeStr) {
-    return bookings.some(function(booking) {
-      return booking.date === dateStr && booking.time === timeStr && booking.status !== 'rejected';
-    });
+  function getBookingSlots() {
+    return Array.from($$('#time-slots-root .time-slot[data-role="booking-slot"]'));
   }
 
-  function isPastTimeSlot(dateStr, timeStr) {
-    if (dateStr !== todayString) return false;
-    var now = new Date();
-    return getTimeValue(timeStr) <= now.getHours() * 60 + now.getMinutes();
-  }
-
-  function getDateAvailability(dateStr, bookings) {
-    var occupiedCount = 0;
-    var availableCount = 0;
-
-    timeSlots.forEach(function(slot) {
-      if (slot.dataset.baseDisabled === 'true') return;
-      var time = slot.dataset.time;
-      if (isPastTimeSlot(dateStr, time)) return;
-      if (isSlotTaken(bookings, dateStr, time)) {
-        occupiedCount++;
-        return;
-      }
-      availableCount++;
-    });
-
-    return {
-      availableCount: availableCount,
-      occupiedCount: occupiedCount
-    };
-  }
-
-  function getFirstAvailableTime(dateStr, bookings) {
-    for (var i = 0; i < timeSlots.length; i++) {
-      var slot = timeSlots[i];
-      if (slot.dataset.baseDisabled === 'true') continue;
-      var time = slot.dataset.time;
-      if (isPastTimeSlot(dateStr, time)) continue;
-      if (isSlotTaken(bookings, dateStr, time)) continue;
-      return time;
-    }
-    return null;
-  }
-
-  function findNextAvailableDate(maxDays, bookings) {
-    bookings = bookings || getOccupancyBookings();
-    var cursor = new Date(todayStart);
-
-    for (var i = 0; i < maxDays; i++) {
-      var dateStr = toISODate(cursor);
-      if (getDateAvailability(dateStr, bookings).availableCount > 0) {
-        return dateStr;
-      }
-      cursor.setDate(cursor.getDate() + 1);
-    }
-
-    return todayString;
-  }
-
-  function alignSelectionWithAvailability(bookings) {
-    bookings = bookings || getOccupancyBookings();
-    var availability = selectedDate ? getDateAvailability(selectedDate, bookings) : { availableCount: 0 };
-
-    if (!selectedDate || availability.availableCount <= 0) {
-      selectedDate = findNextAvailableDate(90, bookings);
-      selectedTime = null;
-    }
-
-    if (selectedDate && selectedTime && (isPastTimeSlot(selectedDate, selectedTime) || isSlotTaken(bookings, selectedDate, selectedTime))) {
-      selectedTime = null;
-    }
-
-    selectedDateObj = parseDate(selectedDate);
-    calYear = selectedDateObj.getFullYear();
-    calMonth = selectedDateObj.getMonth();
+  function getBlockedTimeSet() {
+    return new Set(runtime.disabledTimes);
   }
 
   function escapeHTML(str) {
@@ -286,6 +302,73 @@
       el.style.transform = 'translateX(20px)';
       setTimeout(function() { el.remove(); }, 300);
     }, duration);
+  }
+
+  function renderBookingTimeSlots() {
+    if (!timeSlotsRoot) return;
+
+    var html = runtime.timeConfig.timeGroups.map(function(group) {
+      var groupHtml = '<p class="time-picker__period">' + escapeHTML(group.label) + '</p>';
+      groupHtml += '<div class="time-slots">';
+      group.times.forEach(function(time) {
+        groupHtml += '<button class="time-slot" type="button" data-role="booking-slot" data-time="' + escapeHTML(time) + '">' + escapeHTML(time) + '</button>';
+      });
+      groupHtml += '</div>';
+      return groupHtml;
+    }).join('');
+
+    timeSlotsRoot.innerHTML = html;
+
+    getBookingSlots().forEach(function(slot) {
+      slot.addEventListener('click', function() {
+        if (slot.disabled) return;
+        selectedTime = slot.dataset.time;
+        refreshTimeSlots(getOccupancyBookings());
+        if (window.innerWidth <= 768 && formPanel && !reasonInput.value.trim()) {
+          setTimeout(function() {
+            formPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 120);
+        }
+      });
+    });
+  }
+
+  function renderAdminTimeSettings() {
+    if (!adminTimeSettings) return;
+
+    var blockedTimes = new Set(runtime.adminDisabledDraft);
+    var html = runtime.timeConfig.timeGroups.map(function(group) {
+      var groupHtml = '<div class="admin-settings__group">';
+      groupHtml += '<div class="admin-settings__group-title">' + escapeHTML(group.label) + '</div>';
+      groupHtml += '<div class="time-slots">';
+      group.times.forEach(function(time) {
+        var blocked = blockedTimes.has(time);
+        groupHtml += '<button class="time-slot admin-time-toggle' + (blocked ? ' admin-time-toggle--blocked' : '') + '" type="button" data-admin-time="' + escapeHTML(time) + '" aria-pressed="' + (blocked ? 'true' : 'false') + '">' + escapeHTML(time) + '</button>';
+      });
+      groupHtml += '</div></div>';
+      return groupHtml;
+    }).join('');
+
+    adminTimeSettings.innerHTML = html;
+
+    adminTimeSettings.querySelectorAll('[data-admin-time]').forEach(function(button) {
+      button.addEventListener('click', function() {
+        var time = button.dataset.adminTime;
+        if (!time) return;
+
+        if (runtime.adminDisabledDraft.indexOf(time) === -1) runtime.adminDisabledDraft.push(time);
+        else runtime.adminDisabledDraft = runtime.adminDisabledDraft.filter(function(item) { return item !== time; });
+
+        runtime.adminDisabledDraft = normalizeDisabledTimes(runtime.adminDisabledDraft);
+        renderAdminTimeSettings();
+      });
+    });
+
+    if (adminTimeStatus) {
+      if (runtime.settingsSavePending) adminTimeStatus.textContent = '正在保存时段设置，请稍候。';
+      else if (runtime.adminDisabledDraft.length === 0) adminTimeStatus.textContent = '当前所有配置时段都开放预约。';
+      else adminTimeStatus.textContent = '当前已关闭 ' + runtime.adminDisabledDraft.length + ' 个时段：' + runtime.adminDisabledDraft.join('、');
+    }
   }
 
   function setActiveNav(hash) {
@@ -318,63 +401,14 @@
   function formatDate(dateStr) {
     if (!dateStr) return '—';
     var parts = dateStr.split('-');
-    if (parts.length === 3) {
-      return parts[0] + ' 年 ' + parseInt(parts[1], 10) + ' 月 ' + parseInt(parts[2], 10) + ' 日';
-    }
+    if (parts.length === 3) return parts[0] + ' 年 ' + parseInt(parts[1], 10) + ' 月 ' + parseInt(parts[2], 10) + ' 日';
     return dateStr;
   }
 
   function formatSubmittedAt(isoString) {
     var date = new Date(isoString || '');
     if (Number.isNaN(date.getTime())) return '—';
-    return (
-      date.getFullYear() + ' 年 ' +
-      (date.getMonth() + 1) + ' 月 ' +
-      date.getDate() + ' 日 ' +
-      String(date.getHours()).padStart(2, '0') + ':' +
-      String(date.getMinutes()).padStart(2, '0')
-    );
-  }
-
-  function getAdminHeaders(password) {
-    return {
-      Authorization: 'Bearer ' + String(password || runtime.adminPassword || '')
-    };
-  }
-
-  async function parseApiResponse(response) {
-    var text = await response.text();
-    if (!text) return {};
-    try {
-      return JSON.parse(text);
-    } catch (error) {
-      throw new Error('服务器返回了无法识别的数据');
-    }
-  }
-
-  async function apiRequest(path, options) {
-    options = options || {};
-
-    var headers = Object.assign({
-      Accept: 'application/json'
-    }, options.headers || {});
-
-    var hasBody = options.body !== undefined;
-    if (hasBody) headers['Content-Type'] = 'application/json';
-
-    var response = await fetch(API_BASE_URL + path, {
-      method: options.method || 'GET',
-      headers: headers,
-      body: hasBody ? JSON.stringify(options.body) : undefined,
-      cache: 'no-store'
-    });
-
-    var data = await parseApiResponse(response);
-    if (!response.ok || (data && data.ok === false)) {
-      throw new Error((data && data.error) || '请求失败，请稍后再试');
-    }
-
-    return data || {};
+    return date.getFullYear() + ' 年 ' + (date.getMonth() + 1) + ' 月 ' + date.getDate() + ' 日 ' + String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0');
   }
 
   function updateConnectionUI() {
@@ -415,9 +449,90 @@
 
     if (adminPanelDesc) {
       adminPanelDesc.textContent = runtime.remoteEnabled
-        ? '审核所有在线预约请求，同意或拒绝后，结果会同步回用户页面。'
+        ? '审核预约请求，并直接决定哪些时段暂时不开放。'
         : '审核所有预约请求，同意或拒绝并注明理由。';
     }
+  }
+
+  function isSlotTaken(bookings, dateStr, timeStr) {
+    return bookings.some(function(booking) {
+      return booking.date === dateStr && booking.time === timeStr && booking.status !== 'rejected';
+    });
+  }
+
+  function isPastTimeSlot(dateStr, timeStr) {
+    if (dateStr !== todayString) return false;
+    var now = new Date();
+    return getTimeValue(timeStr) <= now.getHours() * 60 + now.getMinutes();
+  }
+
+  function getDateAvailability(dateStr, bookings) {
+    var blockedTimes = getBlockedTimeSet();
+    var occupiedCount = 0;
+    var availableCount = 0;
+
+    getBookingSlots().forEach(function(slot) {
+      var time = slot.dataset.time;
+      if (blockedTimes.has(time)) return;
+      if (isPastTimeSlot(dateStr, time)) return;
+      if (isSlotTaken(bookings, dateStr, time)) {
+        occupiedCount++;
+        return;
+      }
+      availableCount++;
+    });
+
+    return {
+      availableCount: availableCount,
+      occupiedCount: occupiedCount
+    };
+  }
+
+  function getFirstAvailableTime(dateStr, bookings) {
+    var blockedTimes = getBlockedTimeSet();
+    var slots = getBookingSlots();
+
+    for (var i = 0; i < slots.length; i++) {
+      var time = slots[i].dataset.time;
+      if (blockedTimes.has(time)) continue;
+      if (isPastTimeSlot(dateStr, time)) continue;
+      if (isSlotTaken(bookings, dateStr, time)) continue;
+      return time;
+    }
+    return null;
+  }
+
+  function findNextAvailableDate(maxDays, bookings) {
+    bookings = bookings || getOccupancyBookings();
+    var cursor = new Date(todayStart);
+
+    for (var i = 0; i < maxDays; i++) {
+      var dateStr = toISODate(cursor);
+      if (getDateAvailability(dateStr, bookings).availableCount > 0) return dateStr;
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    return todayString;
+  }
+
+  function alignSelectionWithAvailability(bookings) {
+    bookings = bookings || getOccupancyBookings();
+    var availability = selectedDate ? getDateAvailability(selectedDate, bookings) : { availableCount: 0 };
+
+    if (!selectedDate || availability.availableCount <= 0) {
+      selectedDate = findNextAvailableDate(90, bookings);
+      selectedTime = null;
+    }
+
+    if (selectedDate && selectedTime) {
+      if (getBlockedTimeSet().has(selectedTime) || isPastTimeSlot(selectedDate, selectedTime) || isSlotTaken(bookings, selectedDate, selectedTime)) {
+        selectedTime = null;
+      }
+    }
+
+    selectedDateObj = parseDate(selectedDate);
+    calYear = selectedDateObj.getFullYear();
+    calMonth = selectedDateObj.getMonth();
   }
 
   function getSelectionStage() {
@@ -432,18 +547,12 @@
     var firstAvailableTime = spotlightDate ? getFirstAvailableTime(spotlightDate, bookings) : null;
     var stage = getSelectionStage();
 
-    if (heroNextDate) {
-      heroNextDate.textContent = spotlightDate ? formatDate(spotlightDate) : '正在计算可预约日期';
-    }
+    if (heroNextDate) heroNextDate.textContent = spotlightDate ? formatDate(spotlightDate) : '正在计算可预约日期';
 
     if (heroNextTime) {
-      if (selectedDate && selectedTime) {
-        heroNextTime.textContent = '当前已锁定 ' + selectedTime + '，补上说明后就能提交。';
-      } else if (spotlightDate && firstAvailableTime) {
-        heroNextTime.textContent = '推荐时段 ' + firstAvailableTime + '，可以从这一步开始。';
-      } else {
-        heroNextTime.textContent = '这一天没有空位了，系统会自动引导你切到下一可约日期。';
-      }
+      if (selectedDate && selectedTime) heroNextTime.textContent = '当前已锁定 ' + selectedTime + '，补上说明后就能提交。';
+      else if (spotlightDate && firstAvailableTime) heroNextTime.textContent = '推荐时段 ' + firstAvailableTime + '，可以从这一步开始。';
+      else heroNextTime.textContent = '当前配置里没有空余时段，成可以到后台重新开放时间。';
     }
 
     if (heroNextStatus) {
@@ -467,7 +576,7 @@
     });
 
     if (stageLabel) {
-      if (stage === 'time') stageLabel.textContent = availableCount > 0 ? '第 2 步：挑一个你方便的时段。' : '这一天已经满了，切换日期后继续。';
+      if (stage === 'time') stageLabel.textContent = availableCount > 0 ? '第 2 步：挑一个你方便的时段。' : '当前开放时段已经满了，切换日期或等成开放新时间。';
       else if (stage === 'reason') stageLabel.textContent = '第 3 步：写一句说明，帮助成更快确认。';
       else if (stage === 'ready') stageLabel.textContent = '已完成全部步骤，确认无误后就提交预约。';
       else stageLabel.textContent = '第 1 步：先看一下系统为你推荐的日期。';
@@ -487,17 +596,11 @@
     }
 
     if (formStatusNote) {
-      if (runtime.submitPending) {
-        formStatusNote.textContent = runtime.remoteEnabled ? '正在把预约写入在线后台，请稍候。' : '正在保存当前预约，请稍候。';
-      } else if (stage === 'time') {
-        formStatusNote.textContent = '日期已经为你准备好了，下一步只需要锁定一个时段。';
-      } else if (stage === 'reason') {
-        formStatusNote.textContent = '已选 ' + formatDate(selectedDate) + ' · ' + selectedTime + '，再写一句说明就能提交。';
-      } else if (stage === 'ready') {
-        formStatusNote.textContent = '已选 ' + formatDate(selectedDate) + ' · ' + selectedTime + '，现在可以正式提交预约申请。';
-      } else {
-        formStatusNote.textContent = '完成日期、时段和预约说明后，就可以正式提交。';
-      }
+      if (runtime.submitPending) formStatusNote.textContent = runtime.remoteEnabled ? '正在把预约写入在线后台，请稍候。' : '正在保存当前预约，请稍候。';
+      else if (stage === 'time') formStatusNote.textContent = '日期已经为你准备好了，下一步只需要锁定一个时段。';
+      else if (stage === 'reason') formStatusNote.textContent = '已选 ' + formatDate(selectedDate) + ' · ' + selectedTime + '，再写一句说明就能提交。';
+      else if (stage === 'ready') formStatusNote.textContent = '已选 ' + formatDate(selectedDate) + ' · ' + selectedTime + '，现在可以正式提交预约申请。';
+      else formStatusNote.textContent = '完成日期、时段和预约说明后，就可以正式提交。';
     }
   }
 
@@ -522,29 +625,31 @@
     }
 
     if (availableCount <= 0) {
-      if (availableCountLabel) availableCountLabel.textContent = '当天已满';
-      if (timePickerHint) timePickerHint.textContent = '当天没有可预约时段了，换一天试试。';
+      if (availableCountLabel) availableCountLabel.textContent = '当前不可约';
+      if (timePickerHint) timePickerHint.textContent = '这个日期现在没有开放时段了，换一天试试。';
       updateHeroSpotlight(bookings, availableCount);
       updateFlowState(availableCount);
       return;
     }
 
     if (availableCountLabel) availableCountLabel.textContent = availableCount + ' 个可选';
-    if (timePickerHint) timePickerHint.textContent = '已自动过滤不可用时段，选择你方便的时间即可。';
+    if (timePickerHint) timePickerHint.textContent = '已自动过滤关闭、占用和过期时段，选择你方便的时间即可。';
     updateHeroSpotlight(bookings, availableCount);
     updateFlowState(availableCount);
   }
 
   function refreshTimeSlots(bookings) {
+    var blockedTimes = getBlockedTimeSet();
+    var slots = getBookingSlots();
     var availableCount = 0;
     var selectedStillValid = false;
 
-    timeSlots.forEach(function(slot) {
+    slots.forEach(function(slot) {
       var time = slot.dataset.time;
-      var baseDisabled = slot.dataset.baseDisabled === 'true';
+      var blocked = blockedTimes.has(time);
       var occupied = false;
       var past = false;
-      var disabled = baseDisabled || !selectedDate;
+      var disabled = blocked || !selectedDate;
 
       if (!disabled) {
         past = isPastTimeSlot(selectedDate, time);
@@ -614,7 +719,7 @@
         var availability = getDateAvailability(dateStr, bookings);
         if (availability.availableCount === 0) {
           btn.classList.add('calendar__day--full');
-          btn.title = '当天已满';
+          btn.title = '当天没有开放时段';
         } else if (availability.occupiedCount > 0) {
           btn.classList.add('calendar__day--busy');
           btn.title = '部分时段已被占用';
@@ -651,12 +756,59 @@
     }
   }
 
+  async function parseApiResponse(response) {
+    var text = await response.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      throw new Error('服务器返回了无法识别的数据');
+    }
+  }
+
+  async function apiRequest(path, options) {
+    options = options || {};
+
+    var headers = Object.assign({ Accept: 'application/json' }, options.headers || {});
+    var hasBody = options.body !== undefined;
+    if (hasBody) headers['Content-Type'] = 'application/json';
+
+    var response = await fetch(API_BASE_URL + path, {
+      method: options.method || 'GET',
+      headers: headers,
+      body: hasBody ? JSON.stringify(options.body) : undefined,
+      cache: 'no-store'
+    });
+
+    var data = await parseApiResponse(response);
+    if (!response.ok || (data && data.ok === false)) {
+      throw new Error((data && data.error) || '请求失败，请稍后再试');
+    }
+
+    return data || {};
+  }
+
+  function getAdminHeaders(password) {
+    return {
+      Authorization: 'Bearer ' + String(password || runtime.adminPassword || '')
+    };
+  }
+
+  function applySettingsPayload(payload) {
+    runtime.timeConfig = normalizeTimeConfig(payload);
+    runtime.disabledTimes = normalizeDisabledTimes(payload.disabledTimes);
+    runtime.adminDisabledDraft = runtime.disabledTimes.slice();
+    renderBookingTimeSlots();
+    renderAdminTimeSettings();
+  }
+
   function syncAllViews() {
     alignSelectionWithAvailability(getOccupancyBookings());
     renderCalendar();
     refreshTimeSlots(getOccupancyBookings());
     renderMyBookings();
     renderAdminList();
+    renderAdminTimeSettings();
     updateConnectionUI();
   }
 
@@ -670,12 +822,14 @@
       updateConnectionUI();
       try {
         var results = await Promise.all([
-          apiRequest('/availability'),
-          apiRequest('/bookings?clientId=' + encodeURIComponent(runtime.clientId))
+          apiRequest('/api/settings'),
+          apiRequest('/api/availability'),
+          apiRequest('/api/bookings?clientId=' + encodeURIComponent(runtime.clientId))
         ]);
 
-        runtime.publicBookings = Array.isArray(results[0].bookings) ? results[0].bookings.map(normalizeBooking).filter(Boolean) : [];
-        runtime.myBookings = Array.isArray(results[1].bookings) ? results[1].bookings.map(normalizeBooking).filter(Boolean) : [];
+        applySettingsPayload(results[0]);
+        runtime.publicBookings = Array.isArray(results[1].bookings) ? results[1].bookings.map(normalizeBooking).filter(Boolean) : [];
+        runtime.myBookings = Array.isArray(results[2].bookings) ? results[2].bookings.map(normalizeBooking).filter(Boolean) : [];
         runtime.lastSyncAt = new Date().toISOString();
         syncAllViews();
       } catch (error) {
@@ -699,7 +853,7 @@
     runtime.adminSyncPromise = (async function() {
       updateConnectionUI();
       try {
-        var data = await apiRequest('/admin/bookings', {
+        var data = await apiRequest('/api/admin/bookings', {
           headers: getAdminHeaders()
         });
         runtime.adminBookings = Array.isArray(data.bookings) ? data.bookings.map(normalizeBooking).filter(Boolean) : [];
@@ -723,9 +877,7 @@
     runtime.pollTimer = window.setInterval(function() {
       if (document.hidden) return;
       syncRemotePublic({ silent: true });
-      if (runtime.adminPassword && !adminPage.classList.contains('hidden')) {
-        syncRemoteAdmin({ silent: true });
-      }
+      if (runtime.adminPassword && !adminPage.classList.contains('hidden')) syncRemoteAdmin({ silent: true });
     }, APP_CONFIG.pollIntervalMs);
   }
 
@@ -745,9 +897,7 @@
       container.innerHTML = '' +
         '<div class="my-booking-empty">' +
         '<div class="my-booking-empty__title">你的预约记录还没开始</div>' +
-        '<div class="my-booking-empty__desc">' + (runtime.remoteEnabled
-          ? '这个区域只展示这台设备提交的预约。先从上面的日期和时段里挑一个合适的窗口。'
-          : '先从上面的日期和时段里挑一个合适的窗口，提交后这里就会显示处理状态。') + '</div>' +
+        '<div class="my-booking-empty__desc">' + (runtime.remoteEnabled ? '这个区域只展示这台设备提交的预约。先从上面的日期和时段里挑一个合适的窗口。' : '先从上面的日期和时段里挑一个合适的窗口，提交后这里就会显示处理状态。') + '</div>' +
         '<a href="#booking" class="btn btn-secondary btn-sm">去选择时段</a>' +
         '</div>';
       return;
@@ -771,15 +921,9 @@
       html += '</div>';
       if (booking.reason) html += '<div class="my-booking-item__reason">事由：' + escapeHTML(booking.reason) + '</div>';
       html += '<div class="my-booking-item__meta">提交时间：' + formatSubmittedAt(booking.createdAt) + '</div>';
-      if (booking.status === 'pending') {
-        html += '<div class="my-booking-item__note">' + (runtime.remoteEnabled ? '等待成审核中，结果会自动从在线后台同步到这里。' : '等待成审核中，结果会同步显示在这里。') + '</div>';
-      }
-      if (booking.status === 'rejected' && booking.rejectReason) {
-        html += '<div class="my-booking-item__reject-reason"><b>成的回复：</b>' + escapeHTML(booking.rejectReason) + '</div>';
-      }
-      if (booking.status === 'accepted') {
-        html += '<div class="my-booking-item__approved"><b>成已同意此预约。</b> 请按时赴约。</div>';
-      }
+      if (booking.status === 'pending') html += '<div class="my-booking-item__note">' + (runtime.remoteEnabled ? '等待成审核中，结果会自动从在线后台同步到这里。' : '等待成审核中，结果会同步显示在这里。') + '</div>';
+      if (booking.status === 'rejected' && booking.rejectReason) html += '<div class="my-booking-item__reject-reason"><b>成的回复：</b>' + escapeHTML(booking.rejectReason) + '</div>';
+      if (booking.status === 'accepted') html += '<div class="my-booking-item__approved"><b>成已同意此预约。</b> 请按时赴约。</div>';
       html += '</div>';
     });
 
@@ -854,8 +998,7 @@
         html += '<button class="btn-accept" data-action="accept" data-id="' + escapeHTML(booking.id) + '">同意</button>';
         html += '<button class="btn-reject" data-action="reject" data-id="' + escapeHTML(booking.id) + '">拒绝</button>';
         html += '<button class="btn btn-secondary btn-sm btn-ghost" data-action="delete" data-id="' + escapeHTML(booking.id) + '">删除</button>';
-        html += '</div>';
-        html += '</div>';
+        html += '</div></div>';
       } else {
         html += '<div class="admin-actions">';
         html += '<button class="btn btn-secondary btn-sm btn-ghost" data-action="delete" data-id="' + escapeHTML(booking.id) + '">删除记录</button>';
@@ -872,11 +1015,8 @@
         var bookingId = button.dataset.id;
         if (!action || !bookingId) return;
 
-        if (runtime.remoteEnabled) {
-          await handleRemoteAdminAction(action, bookingId);
-        } else {
-          handleLocalAdminAction(action, bookingId);
-        }
+        if (runtime.remoteEnabled) await handleRemoteAdminAction(action, bookingId);
+        else handleLocalAdminAction(action, bookingId);
       });
     });
   }
@@ -921,7 +1061,7 @@
   async function handleRemoteAdminAction(action, bookingId) {
     try {
       if (action === 'accept') {
-        await apiRequest('/admin/bookings/' + encodeURIComponent(bookingId) + '/accept', {
+        await apiRequest('/api/admin/bookings/' + encodeURIComponent(bookingId) + '/accept', {
           method: 'POST',
           headers: getAdminHeaders()
         });
@@ -939,14 +1079,14 @@
           return;
         }
 
-        await apiRequest('/admin/bookings/' + encodeURIComponent(bookingId) + '/reject', {
+        await apiRequest('/api/admin/bookings/' + encodeURIComponent(bookingId) + '/reject', {
           method: 'POST',
           headers: getAdminHeaders(),
           body: { rejectReason: rejectReason }
         });
         showToast('成已拒绝该预约');
       } else if (action === 'delete') {
-        await apiRequest('/admin/bookings/' + encodeURIComponent(bookingId), {
+        await apiRequest('/api/admin/bookings/' + encodeURIComponent(bookingId), {
           method: 'DELETE',
           headers: getAdminHeaders()
         });
@@ -963,11 +1103,42 @@
     }
   }
 
-  function updateReasonCounter() {
-    if (reasonCounter) {
-      reasonCounter.textContent = reasonInput.value.length + ' / 200';
-    }
+  async function saveAdminTimeSettings() {
+    var disabledTimes = normalizeDisabledTimes(runtime.adminDisabledDraft);
+    runtime.settingsSavePending = true;
+    renderAdminTimeSettings();
 
+    try {
+      if (runtime.remoteEnabled) {
+        var data = await apiRequest('/api/admin/settings/disabled-times', {
+          method: 'POST',
+          headers: getAdminHeaders(),
+          body: { disabledTimes: disabledTimes }
+        });
+        applySettingsPayload(data);
+        await Promise.all([
+          syncRemotePublic({ silent: true }),
+          syncRemoteAdmin({ silent: true })
+        ]);
+      } else {
+        runtime.disabledTimes = disabledTimes.slice();
+        runtime.adminDisabledDraft = disabledTimes.slice();
+        setLocalSettings({ disabledTimes: runtime.disabledTimes });
+      }
+
+      selectedTime = runtime.disabledTimes.indexOf(selectedTime) !== -1 ? null : selectedTime;
+      syncAllViews();
+      showToast('时段设置已保存');
+    } catch (error) {
+      showToast(error && error.message ? error.message : '保存时段设置失败');
+    } finally {
+      runtime.settingsSavePending = false;
+      renderAdminTimeSettings();
+    }
+  }
+
+  function updateReasonCounter() {
+    if (reasonCounter) reasonCounter.textContent = reasonInput.value.length + ' / 200';
     var bookings = getOccupancyBookings();
     var availableCount = selectedDate ? getDateAvailability(selectedDate, bookings).availableCount : 0;
     updateFlowState(availableCount);
@@ -1016,19 +1187,6 @@
     renderCalendar();
   });
 
-  timeSlots.forEach(function(slot) {
-    slot.addEventListener('click', function() {
-      if (slot.disabled) return;
-      selectedTime = slot.dataset.time;
-      refreshTimeSlots(getOccupancyBookings());
-      if (window.innerWidth <= 768 && formPanel && !reasonInput.value.trim()) {
-        setTimeout(function() {
-          formPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 120);
-      }
-    });
-  });
-
   bookingForm.addEventListener('submit', async function(event) {
     event.preventDefault();
     var reason = reasonInput.value.trim();
@@ -1036,6 +1194,7 @@
     if (!selectedDate) { showToast('请选择预约日期'); return; }
     if (!selectedTime) { showToast('请选择预约时段'); return; }
     if (!reason) { showToast('请填写预约事由'); return; }
+    if (getBlockedTimeSet().has(selectedTime)) { showToast('该时段当前未开放预约'); return; }
 
     var bookings = getOccupancyBookings();
     if (isPastTimeSlot(selectedDate, selectedTime)) {
@@ -1055,7 +1214,7 @@
 
     try {
       if (runtime.remoteEnabled) {
-        await apiRequest('/bookings', {
+        await apiRequest('/api/bookings', {
           method: 'POST',
           body: {
             clientId: runtime.clientId,
@@ -1065,9 +1224,7 @@
           }
         });
         await syncRemotePublic({ silent: true });
-        if (runtime.adminPassword) {
-          await syncRemoteAdmin({ silent: true });
-        }
+        if (runtime.adminPassword) await syncRemoteAdmin({ silent: true });
       } else {
         var localBookings = getLocalBookings();
         localBookings.push({
@@ -1097,9 +1254,7 @@
       }, 500);
     } catch (error) {
       showToast(error && error.message ? error.message : '提交失败，请稍后再试');
-      if (runtime.remoteEnabled) {
-        syncRemotePublic({ silent: true });
-      }
+      if (runtime.remoteEnabled) syncRemotePublic({ silent: true });
     } finally {
       runtime.submitPending = false;
       updateReasonCounter();
@@ -1139,6 +1294,7 @@
         loginError.textContent = loginErrorDefaultText;
         loginError.classList.add('hidden');
         renderAdminList();
+        renderAdminTimeSettings();
         switchPage('admin');
       } else {
         loginError.textContent = loginErrorDefaultText;
@@ -1155,7 +1311,10 @@
 
     try {
       runtime.adminPassword = password;
-      await syncRemoteAdmin({ silent: true });
+      await Promise.all([
+        syncRemotePublic({ silent: true }),
+        syncRemoteAdmin({ silent: true })
+      ]);
       adminPassword.value = '';
       loginError.textContent = loginErrorDefaultText;
       loginError.classList.add('hidden');
@@ -1181,6 +1340,19 @@
     }
   });
 
+  if (adminTimeSaveBtn) {
+    adminTimeSaveBtn.addEventListener('click', function() {
+      saveAdminTimeSettings();
+    });
+  }
+
+  if (adminTimeResetBtn) {
+    adminTimeResetBtn.addEventListener('click', function() {
+      runtime.adminDisabledDraft = [];
+      renderAdminTimeSettings();
+    });
+  }
+
   cancelLoginBtn.addEventListener('click', function() {
     switchPage('booking');
     setActiveNav('#booking');
@@ -1205,21 +1377,23 @@
 
   window.addEventListener('storage', function(event) {
     if (runtime.remoteEnabled) return;
-    if (event.key && event.key !== LOCAL_STORAGE_KEY) return;
+    if (event.key && event.key !== LOCAL_STORAGE_KEY && event.key !== LOCAL_SETTINGS_KEY) return;
+    runtime.disabledTimes = getLocalSettings().disabledTimes;
+    runtime.adminDisabledDraft = runtime.disabledTimes.slice();
+    renderBookingTimeSlots();
     syncAllViews();
   });
 
   document.addEventListener('visibilitychange', function() {
     if (!runtime.remoteEnabled || document.hidden) return;
     syncRemotePublic({ silent: true });
-    if (runtime.adminPassword && !adminPage.classList.contains('hidden')) {
-      syncRemoteAdmin({ silent: true });
-    }
+    if (runtime.adminPassword && !adminPage.classList.contains('hidden')) syncRemoteAdmin({ silent: true });
   });
 
   if (footerYear) footerYear.textContent = String(new Date().getFullYear());
   if (reasonInput) reasonInput.addEventListener('input', updateReasonCounter);
 
+  renderAdminTimeSettings();
   updateConnectionUI();
   updateReasonCounter();
   syncAllViews();
