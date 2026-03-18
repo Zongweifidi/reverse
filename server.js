@@ -502,19 +502,39 @@ async function requestListener(req, res) {
 }
 
 async function start() {
-  await ensureScheduleConfig();
-  await ensureState();
+  let ready = false;
 
   const server = http.createServer((req, res) => {
+    // 初始化未完成时，先返回 503 让健康检查通过轮询等待
+    if (!ready) {
+      setCorsHeaders(res);
+      res.writeHead(503, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Retry-After': '3'
+      });
+      res.end('Starting...');
+      return;
+    }
     requestListener(req, res);
   });
 
-  server.listen(PORT, HOST, () => {
-    console.log(`Server running on http://${HOST}:${PORT}`);
-    console.log(`Admin password: ${ADMIN_PASSWORD}`);
-    console.log(`Data file: ${DATA_FILE}`);
-    console.log(`Schedule config: ${CONFIG_FILE}`);
+  // 先监听端口，让 Railway 健康检查能拿到响应
+  await new Promise((resolve) => {
+    server.listen(PORT, HOST, () => {
+      console.log(`Server listening on http://${HOST}:${PORT}`);
+      resolve();
+    });
   });
+
+  // 再执行文件初始化
+  await ensureScheduleConfig();
+  await ensureState();
+  ready = true;
+
+  console.log(`Ready.`);
+  console.log(`Admin password: ${ADMIN_PASSWORD}`);
+  console.log(`Data file: ${DATA_FILE}`);
+  console.log(`Schedule config: ${CONFIG_FILE}`);
 }
 
 start().catch((error) => {
