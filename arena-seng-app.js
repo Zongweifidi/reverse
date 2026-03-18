@@ -821,10 +821,11 @@
       runtime.syncError = '';
       updateConnectionUI();
       try {
+        // ✅ 修复：去掉重复的 /api 前缀，路径直接从 /settings 开始
         var results = await Promise.all([
-          apiRequest('/api/settings'),
-          apiRequest('/api/availability'),
-          apiRequest('/api/bookings?clientId=' + encodeURIComponent(runtime.clientId))
+          apiRequest('/settings'),
+          apiRequest('/availability'),
+          apiRequest('/bookings?clientId=' + encodeURIComponent(runtime.clientId))
         ]);
 
         applySettingsPayload(results[0]);
@@ -853,7 +854,8 @@
     runtime.adminSyncPromise = (async function() {
       updateConnectionUI();
       try {
-        var data = await apiRequest('/api/admin/bookings', {
+        // ✅ 修复：去掉重复的 /api 前缀
+        var data = await apiRequest('/admin/bookings', {
           headers: getAdminHeaders()
         });
         runtime.adminBookings = Array.isArray(data.bookings) ? data.bookings.map(normalizeBooking).filter(Boolean) : [];
@@ -1061,7 +1063,8 @@
   async function handleRemoteAdminAction(action, bookingId) {
     try {
       if (action === 'accept') {
-        await apiRequest('/api/admin/bookings/' + encodeURIComponent(bookingId) + '/accept', {
+        // ✅ 修复：去掉重复的 /api 前缀
+        await apiRequest('/admin/bookings/' + encodeURIComponent(bookingId) + '/accept', {
           method: 'POST',
           headers: getAdminHeaders()
         });
@@ -1079,14 +1082,16 @@
           return;
         }
 
-        await apiRequest('/api/admin/bookings/' + encodeURIComponent(bookingId) + '/reject', {
+        // ✅ 修复：去掉重复的 /api 前缀
+        await apiRequest('/admin/bookings/' + encodeURIComponent(bookingId) + '/reject', {
           method: 'POST',
           headers: getAdminHeaders(),
           body: { rejectReason: rejectReason }
         });
         showToast('成已拒绝该预约');
       } else if (action === 'delete') {
-        await apiRequest('/api/admin/bookings/' + encodeURIComponent(bookingId), {
+        // ✅ 修复：去掉重复的 /api 前缀
+        await apiRequest('/admin/bookings/' + encodeURIComponent(bookingId), {
           method: 'DELETE',
           headers: getAdminHeaders()
         });
@@ -1110,7 +1115,8 @@
 
     try {
       if (runtime.remoteEnabled) {
-        var data = await apiRequest('/api/admin/settings/disabled-times', {
+        // ✅ 修复：去掉重复的 /api 前缀
+        var data = await apiRequest('/admin/settings/disabled-times', {
           method: 'POST',
           headers: getAdminHeaders(),
           body: { disabledTimes: disabledTimes }
@@ -1214,7 +1220,8 @@
 
     try {
       if (runtime.remoteEnabled) {
-        await apiRequest('/api/bookings', {
+        // ✅ 修复：去掉重复的 /api 前缀
+        await apiRequest('/bookings', {
           method: 'POST',
           body: {
             clientId: runtime.clientId,
